@@ -1,0 +1,201 @@
+testbench:
+
+module testbench;
+
+    logic clk;
+    logic reset;
+
+    RV32I_Processor dut (
+        .clk(clk),
+        .reset(reset)
+    );
+
+    always #5 clk = ~clk;
+
+    task clear_instruction_memory;
+        integer i;
+        begin
+            for (i = 0; i < 256; i = i + 1)
+                dut.IMEM.memory[i] = 32'h00000000;
+        end
+    endtask
+
+    task clear_data_memory;
+        integer i;
+        begin
+            for (i = 0; i < 256; i = i + 1)
+                dut.DMEM.memory[i] = 32'h00000000;
+        end
+    endtask
+
+    task load_fibonacci;
+        begin
+            dut.IMEM.memory[0] = 32'h00000093;
+            dut.IMEM.memory[1] = 32'h00100113;
+            dut.IMEM.memory[2] = 32'h00900193;
+            dut.IMEM.memory[3] = 32'h00018C63;
+            dut.IMEM.memory[4] = 32'h00208233;
+            dut.IMEM.memory[5] = 32'h00010093;
+            dut.IMEM.memory[6] = 32'h00020113;
+            dut.IMEM.memory[7] = 32'hFFF18193;
+            dut.IMEM.memory[8] = 32'hFEDFF06F;
+            dut.IMEM.memory[9] = 32'h00202023;
+        end
+    endtask
+
+    task load_factorial;
+        begin
+            dut.IMEM.memory[0]  = 32'h00500093;
+            dut.IMEM.memory[1]  = 32'h00100113;
+            dut.IMEM.memory[2]  = 32'h02008663;
+            dut.IMEM.memory[3]  = 32'h00000193;
+            dut.IMEM.memory[4]  = 32'h00008293;
+            dut.IMEM.memory[5]  = 32'h00028A63;
+            dut.IMEM.memory[6]  = 32'h002181B3;
+            dut.IMEM.memory[7]  = 32'hFFF28293;
+            dut.IMEM.memory[8]  = 32'hFF5FF06F;
+            dut.IMEM.memory[9]  = 32'h00000013;
+            dut.IMEM.memory[10] = 32'h00018113;
+            dut.IMEM.memory[11] = 32'hFFF08093;
+            dut.IMEM.memory[12] = 32'hFD9FF06F;
+            dut.IMEM.memory[13] = 32'h00202223;
+        end
+    endtask
+
+    task reset_processor;
+        begin
+            reset = 1'b1;
+
+            repeat (2)
+                @(posedge clk);
+
+            #1;
+            reset = 1'b0;
+
+            #1;
+        end
+    endtask
+
+    integer cycle;
+
+    initial begin
+
+        clk = 1'b0;
+        reset = 1'b1;
+
+        $display("");
+        $display("========================================");
+        $display("       RV32I SINGLE-CYCLE PROCESSOR");
+        $display("========================================");
+        $display("");
+
+        clear_instruction_memory();
+        clear_data_memory();
+        load_fibonacci();
+
+        reset_processor();
+
+        $display("========================================");
+        $display("          RV32I FIBONACCI TEST");
+        $display("========================================");
+
+        for (cycle = 0; cycle < 60; cycle = cycle + 1) begin
+
+            @(posedge clk);
+            #1;
+
+            $display(
+                "Cycle=%0d PC=%08h Instruction=%08h ALU=%08h",
+                cycle,
+                dut.PC,
+                dut.instruction,
+                dut.alu_result
+            );
+
+        end
+
+        $display("");
+
+        if (dut.DMEM.memory[0] == 32'd55) begin
+
+            $display("FIBONACCI TEST PASSED");
+            $display("Expected = 55");
+            $display("Got      = %0d", dut.DMEM.memory[0]);
+
+        end
+        else begin
+
+            $display("FIBONACCI TEST FAILED");
+            $display("Expected = 55");
+            $display("Got      = %0d", dut.DMEM.memory[0]);
+
+        end
+
+        $display("");
+
+        $display("========================================");
+        $display("          RV32I FACTORIAL TEST");
+        $display("========================================");
+
+        clear_instruction_memory();
+        clear_data_memory();
+        load_factorial();
+
+        reset_processor();
+
+        for (cycle = 0; cycle < 100; cycle = cycle + 1) begin
+
+            @(posedge clk);
+            #1;
+
+            $display(
+                "Cycle=%0d PC=%08h Instruction=%08h ALU=%08h",
+                cycle,
+                dut.PC,
+                dut.instruction,
+                dut.alu_result
+            );
+
+        end
+
+        $display("");
+
+        if (dut.DMEM.memory[1] == 32'd120) begin
+
+            $display("FACTORIAL TEST PASSED");
+            $display("Expected = 120");
+            $display("Got      = %0d", dut.DMEM.memory[1]);
+
+        end
+        else begin
+
+            $display("FACTORIAL TEST FAILED");
+            $display("Expected = 120");
+            $display("Got      = %0d", dut.DMEM.memory[1]);
+
+        end
+
+        $display("");
+
+        $display("========================================");
+        $display("             REGISTER RESULTS");
+        $display("========================================");
+
+        $display("x0 = %0d", dut.RF.registers[0]);
+        $display("x1 = %0d", dut.RF.registers[1]);
+        $display("x2 = %0d", dut.RF.registers[2]);
+        $display("x3 = %0d", dut.RF.registers[3]);
+        $display("x4 = %0d", dut.RF.registers[4]);
+        $display("x5 = %0d", dut.RF.registers[5]);
+
+        $display("");
+
+        $display("========================================");
+        $display("          ALL TESTS FINISHED");
+        $display("========================================");
+
+        $finish;
+
+    end
+
+endmodule

@@ -1,0 +1,609 @@
+design:
+
+module RV32I_Processor (
+    input logic clk,
+    input logic reset
+);
+
+    logic [31:0] PC;
+    logic [31:0] next_PC;
+    logic [31:0] instruction;
+
+    logic [31:0] read_data1;
+    logic [31:0] read_data2;
+    logic [31:0] write_data;
+
+    logic [31:0] immediate;
+    logic [31:0] alu_a;
+    logic [31:0] alu_b;
+    logic [31:0] alu_result;
+
+    logic [31:0] memory_data;
+    logic [31:0] pc_plus_4;
+
+    logic RegWrite;
+    logic ALUSrc;
+    logic MemRead;
+    logic MemWrite;
+    logic MemToReg;
+    logic Branch;
+    logic BNE;
+    logic Jump;
+    logic JALR;
+    logic AUIPC;
+
+    logic [1:0] ALUOp;
+    logic [3:0] ALUControl;
+
+    logic branch_taken;
+
+    logic [31:0] branch_target;
+    logic [31:0] jal_target;
+    logic [31:0] jalr_target;
+
+    assign pc_plus_4 = PC + 32'd4;
+
+    Program_Counter PC_UNIT (
+        .clk(clk),
+        .reset(reset),
+        .next_PC(next_PC),
+        .PC(PC)
+    );
+
+    Instruction_Memory IMEM (
+        .address(PC),
+        .instruction(instruction)
+    );
+
+    Control_Unit CONTROL (
+        .opcode(instruction[6:0]),
+        .funct3(instruction[14:12]),
+        .RegWrite(RegWrite),
+        .ALUSrc(ALUSrc),
+        .MemRead(MemRead),
+        .MemWrite(MemWrite),
+        .MemToReg(MemToReg),
+        .Branch(Branch),
+        .BNE(BNE),
+        .Jump(Jump),
+        .JALR(JALR),
+        .AUIPC(AUIPC),
+        .ALUOp(ALUOp)
+    );
+
+    Register_File RF (
+        .clk(clk),
+        .reset(reset),
+        .RegWrite(RegWrite),
+        .Read_Reg1(instruction[19:15]),
+        .Read_Reg2(instruction[24:20]),
+        .Write_Reg(instruction[11:7]),
+        .Write_Data(write_data),
+        .Read_Data1(read_data1),
+        .Read_Data2(read_data2)
+    );
+
+    Immediate_Generator IMM_GEN (
+        .instruction(instruction),
+        .immediate(immediate)
+    );
+
+    ALU_Control ALU_CTRL (
+        .ALUOp(ALUOp),
+        .funct3(instruction[14:12]),
+        .funct7(instruction[31:25]),
+        .opcode(instruction[6:0]),
+        .ALUControl(ALUControl)
+    );
+
+    always_comb begin
+        if (AUIPC)
+            alu_a = PC;
+        else
+            alu_a = read_data1;
+    end
+
+    always_comb begin
+        if (ALUSrc)
+            alu_b = immediate;
+        else
+            alu_b = read_data2;
+    end
+
+    ALU ALU_UNIT (
+        .A(alu_a),
+        .B(alu_b),
+        .ALUControl(ALUControl),
+        .Result(alu_result)
+    );
+
+    Data_Memory DMEM (
+        .clk(clk),
+        .MemRead(MemRead),
+        .MemWrite(MemWrite),
+        .address(alu_result),
+        .write_data(read_data2),
+        .read_data(memory_data)
+    );
+
+    always_comb begin
+        if (MemToReg)
+            write_data = memory_data;
+        else if (Jump || JALR)
+            write_data = pc_plus_4;
+        else
+            write_data = alu_result;
+    end
+
+    assign branch_target = PC + immediate;
+
+    assign jal_target = PC + immediate;
+
+    assign jalr_target = (read_data1 + immediate) & 32'hFFFFFFFE;
+
+    always_comb begin
+        branch_taken = 1'b0;
+
+        if (Branch) begin
+            if (BNE) begin
+                if (read_data1 != read_data2)
+                    branch_taken = 1'b1;
+            end
+            else begin
+                if (read_data1 == read_data2)
+                    branch_taken = 1'b1;
+            end
+        end
+    end
+
+    always_comb begin
+        next_PC = pc_plus_4;
+
+        if (branch_taken)
+            next_PC = branch_target;
+
+        if (Jump)
+            next_PC = jal_target;
+
+        if (JALR)
+            next_PC = jalr_target;
+    end
+
+endmodule
+
+
+module Program_Counter (
+    input logic clk,
+    input logic reset,
+    input logic [31:0] next_PC,
+    output logic [31:0] PC
+);
+
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset)
+            PC <= 32'd0;
+        else
+            PC <= next_PC;
+    end
+
+endmodule
+
+
+module Instruction_Memory (
+    input logic [31:0] address,
+    output logic [31:0] instruction
+);
+
+    logic [31:0] memory [0:255];
+
+    always_comb begin
+        instruction = memory[address[9:2]];
+    end
+
+endmodule
+
+
+module Data_Memory (
+    input logic clk,
+    input logic MemRead,
+    input logic MemWrite,
+    input logic [31:0] address,
+    input logic [31:0] write_data,
+    output logic [31:0] read_data
+);
+
+    logic [31:0] memory [0:255];
+
+    always_comb begin
+        if (MemRead)
+            read_data = memory[address[9:2]];
+        else
+            read_data = 32'd0;
+    end
+
+    always_ff @(posedge clk) begin
+        if (MemWrite)
+            memory[address[9:2]] <= write_data;
+    end
+
+endmodule
+
+
+module Register_File (
+    input logic clk,
+    input logic reset,
+    input logic RegWrite,
+
+    input logic [4:0] Read_Reg1,
+    input logic [4:0] Read_Reg2,
+    input logic [4:0] Write_Reg,
+
+    input logic [31:0] Write_Data,
+
+    output logic [31:0] Read_Data1,
+    output logic [31:0] Read_Data2
+);
+
+    logic [31:0] registers [0:31];
+
+    integer i;
+
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            for (i = 0; i < 32; i = i + 1)
+                registers[i] <= 32'd0;
+        end
+        else begin
+            if (RegWrite && (Write_Reg != 5'd0))
+                registers[Write_Reg] <= Write_Data;
+
+            registers[0] <= 32'd0;
+        end
+    end
+
+    always_comb begin
+        if (Read_Reg1 == 5'd0)
+            Read_Data1 = 32'd0;
+        else
+            Read_Data1 = registers[Read_Reg1];
+
+        if (Read_Reg2 == 5'd0)
+            Read_Data2 = 32'd0;
+        else
+            Read_Data2 = registers[Read_Reg2];
+    end
+
+endmodule
+
+
+module Immediate_Generator (
+    input logic [31:0] instruction,
+    output logic [31:0] immediate
+);
+
+    always_comb begin
+
+        immediate = 32'd0;
+
+        case (instruction[6:0])
+
+            // I-Type
+            7'b0010011: begin
+                immediate = {{20{instruction[31]}},
+                             instruction[31:20]};
+            end
+
+            // LW
+            7'b0000011: begin
+                immediate = {{20{instruction[31]}},
+                             instruction[31:20]};
+            end
+
+            // JALR
+            7'b1100111: begin
+                immediate = {{20{instruction[31]}},
+                             instruction[31:20]};
+            end
+
+            // S-Type
+            7'b0100011: begin
+                immediate = {{20{instruction[31]}},
+                             instruction[31:25],
+                             instruction[11:7]};
+            end
+
+            // B-Type
+            7'b1100011: begin
+                immediate = {{19{instruction[31]}},
+                             instruction[31],
+                             instruction[7],
+                             instruction[30:25],
+                             instruction[11:8],
+                             1'b0};
+            end
+
+            // J-Type
+            7'b1101111: begin
+                immediate = {{11{instruction[31]}},
+                             instruction[31],
+                             instruction[19:12],
+                             instruction[20],
+                             instruction[30:21],
+                             1'b0};
+            end
+
+            // LUI
+            7'b0110111: begin
+                immediate = {instruction[31:12], 12'b0};
+            end
+
+            // AUIPC
+            7'b0010111: begin
+                immediate = {instruction[31:12], 12'b0};
+            end
+
+            default: begin
+                immediate = 32'd0;
+            end
+
+        endcase
+
+    end
+
+endmodule
+
+
+module Control_Unit (
+    input logic [6:0] opcode,
+    input logic [2:0] funct3,
+
+    output logic RegWrite,
+    output logic ALUSrc,
+    output logic MemRead,
+    output logic MemWrite,
+    output logic MemToReg,
+    output logic Branch,
+    output logic BNE,
+    output logic Jump,
+    output logic JALR,
+    output logic AUIPC,
+
+    output logic [1:0] ALUOp
+);
+
+    always_comb begin
+
+        RegWrite = 1'b0;
+        ALUSrc   = 1'b0;
+        MemRead  = 1'b0;
+        MemWrite = 1'b0;
+        MemToReg = 1'b0;
+
+        Branch = 1'b0;
+        BNE    = 1'b0;
+        Jump   = 1'b0;
+        JALR   = 1'b0;
+        AUIPC  = 1'b0;
+
+        ALUOp = 2'b00;
+
+        case (opcode)
+
+            // R-Type
+            7'b0110011: begin
+                RegWrite = 1'b1;
+                ALUSrc   = 1'b0;
+                ALUOp    = 2'b10;
+            end
+
+            // I-Type
+            7'b0010011: begin
+                RegWrite = 1'b1;
+                ALUSrc   = 1'b1;
+                ALUOp    = 2'b11;
+            end
+
+            // LW
+            7'b0000011: begin
+                RegWrite = 1'b1;
+                ALUSrc   = 1'b1;
+                MemRead  = 1'b1;
+                MemToReg = 1'b1;
+                ALUOp    = 2'b00;
+            end
+
+            // SW
+            7'b0100011: begin
+                ALUSrc   = 1'b1;
+                MemWrite = 1'b1;
+                ALUOp    = 2'b00;
+            end
+
+            // BEQ / BNE
+            7'b1100011: begin
+                Branch = 1'b1;
+                ALUOp  = 2'b01;
+
+                if (funct3 == 3'b001)
+                    BNE = 1'b1;
+            end
+
+            // JAL
+            7'b1101111: begin
+                RegWrite = 1'b1;
+                Jump     = 1'b1;
+            end
+
+            // JALR
+            7'b1100111: begin
+                RegWrite = 1'b1;
+                JALR     = 1'b1;
+                ALUSrc   = 1'b1;
+                ALUOp    = 2'b00;
+            end
+
+            // LUI
+            7'b0110111: begin
+                RegWrite = 1'b1;
+                ALUSrc   = 1'b1;
+                ALUOp    = 2'b11;
+            end
+
+            // AUIPC
+            7'b0010111: begin
+                RegWrite = 1'b1;
+                ALUSrc   = 1'b1;
+                AUIPC    = 1'b1;
+                ALUOp    = 2'b00;
+            end
+
+            default: begin
+                RegWrite = 1'b0;
+            end
+
+        endcase
+
+    end
+
+endmodule
+
+
+module ALU_Control (
+    input logic [1:0] ALUOp,
+    input logic [2:0] funct3,
+    input logic [6:0] funct7,
+    input logic [6:0] opcode,
+
+    output logic [3:0] ALUControl
+);
+
+    always_comb begin
+
+        ALUControl = 4'b0000;
+
+        case (ALUOp)
+
+            // ADD
+            2'b00: begin
+                ALUControl = 4'b0000;
+            end
+
+            // SUB
+            2'b01: begin
+                ALUControl = 4'b0001;
+            end
+
+            // R-Type
+            2'b10: begin
+
+                case (funct3)
+
+                    // ADD / SUB
+                    3'b000: begin
+                        if (funct7 == 7'b0100000)
+                            ALUControl = 4'b0001;
+                        else
+                            ALUControl = 4'b0000;
+                    end
+
+                    // AND
+                    3'b111:
+                        ALUControl = 4'b0010;
+
+                    // OR
+                    3'b110:
+                        ALUControl = 4'b0011;
+
+                    // XOR
+                    3'b100:
+                        ALUControl = 4'b0100;
+
+                    default:
+                        ALUControl = 4'b0000;
+
+                endcase
+
+            end
+
+            // I-Type
+            2'b11: begin
+
+                case (funct3)
+
+                    // ADDI
+                    3'b000:
+                        ALUControl = 4'b0000;
+
+                    // ANDI
+                    3'b111:
+                        ALUControl = 4'b0010;
+
+                    // ORI
+                    3'b110:
+                        ALUControl = 4'b0011;
+
+                    default:
+                        ALUControl = 4'b0000;
+
+                endcase
+
+            end
+
+            default:
+                ALUControl = 4'b0000;
+
+        endcase
+
+        // LUI
+        if (opcode == 7'b0110111)
+            ALUControl = 4'b0101;
+
+    end
+
+endmodule
+
+
+module ALU (
+    input logic [31:0] A,
+    input logic [31:0] B,
+    input logic [3:0] ALUControl,
+
+    output logic [31:0] Result
+);
+
+    always_comb begin
+
+        case (ALUControl)
+
+            // ADD
+            4'b0000:
+                Result = A + B;
+
+            // SUB
+            4'b0001:
+                Result = A - B;
+
+            // AND
+            4'b0010:
+                Result = A & B;
+
+            // OR
+            4'b0011:
+                Result = A | B;
+
+            // XOR
+            4'b0100:
+                Result = A ^ B;
+
+            // PASS B
+            4'b0101:
+                Result = B;
+
+            default:
+                Result = 32'd0;
+
+        endcase
+
+    end
+
+endmodule
